@@ -31,7 +31,7 @@ import utils.version_ : addPG;
 
 import bio.bam.reader, bio.bam.readrange, bio.bam.writer, bio.bam.referenceinfo,
        bio.bam.read, bio.sam.header, bio.bam.abstractreader,
-       bio.bam.multireader;
+       bio.bam.multireader, bio.core.kmer;
 import std.traits, std.typecons, std.range, std.algorithm, std.parallelism,
        std.exception, std.file, std.typetuple, std.conv, std.array, std.bitmanip,
        core.stdc.stdlib, std.datetime, undead.stream : BufferedFile, FileMode;
@@ -563,15 +563,15 @@ auto readPairsAndFragments(alias hashFunc=simpleHash, R)
 
 // 8 bytes
 struct SingleEndBasicInfo {
-    mixin(bitfields!(short, "library_id", 16,
-                     ushort, "ref_id", 14,
+    mixin(bitfields!(ushort, "ref_id", 6,
+                     uint, "umi", 24,
                      ubyte, "reversed", 1,
-                     ubyte, "paired", 1));
+                     ubyte, "paired", 1));  // 32-bit bitfield (4 bytes)
     int coord;
 
     bool samePosition(SingleEndBasicInfo other) const {
         return coord == other.coord && ref_id == other.ref_id &&
-            reversed == other.reversed && library_id == other.library_id;
+            reversed == other.reversed && umi == other.umi;
     }
 }
 static assert(SingleEndBasicInfo.sizeof == 8);
@@ -584,16 +584,16 @@ struct SingleEndInfo {
 }
 
 struct PairedEndsInfo {
-    mixin(bitfields!(short, "library_id", 16,
-                     ushort, "ref_id1", 14,
+    mixin(bitfields!(ushort, "ref_id1", 6,
+                     uint, "umi", 24,
                      ubyte, "reversed1", 1,
-                     ubyte, "reversed2", 1));
-    int coord1;
-    int coord2;
-    ushort ref_id2;
+                     ubyte, "reversed2", 1));  // 32-bit bitfield (4 bytes)
+    int coord1;  // 4 bytes --> casting struct to long ends here
+    int coord2;  // 4 bytes
+    ushort ref_id2;  // 2 bytes
 
-    uint score; // sum of base qualities that are >= 15
-    ulong idx1, idx2;
+    uint score; // sum of base qualities that are >= 15  // 4 bytes
+    ulong idx1, idx2;  //  8 bytes each, so 16 bytes
 
     SingleEndBasicInfo read1_basic_info() @property {
         typeof(return) result = void;
@@ -609,8 +609,8 @@ struct PairedEndsInfo {
 static assert(PairedEndsInfo.sizeof == 40);
 
 bool singleEndInfoComparator(S1, S2)(auto ref S1 s1, auto ref S2 s2) {
-    if (s1.library_id < s2.library_id) return true;
-    if (s1.library_id > s2.library_id) return false;
+    if (s1.umi < s2.umi) return true;
+    if (s1.umi > s2.umi) return false;
     if (s1.ref_id < s2.ref_id) return true;
     if (s1.ref_id > s2.ref_id) return false;
     if (s1.coord < s2.coord) return true;
@@ -620,8 +620,8 @@ bool singleEndInfoComparator(S1, S2)(auto ref S1 s1, auto ref S2 s2) {
 }
 
 bool pairedEndsInfoComparator(P1, P2)(auto ref P1 p1, auto ref P2 p2) {
-    if (p1.library_id < p2.library_id) return true;
-    if (p1.library_id > p2.library_id) return false;
+    if (p1.umi < p2.umi) return true;
+    if (p1.umi > p2.umi) return false;
     if (p1.ref_id1 < p2.ref_id1) return true;
     if (p1.ref_id1 > p2.ref_id1) return false;
     if (p1.coord1 < p2.coord1) return true;
@@ -718,14 +718,23 @@ auto collectSingleEndInfo(IndexedBamRead read, ReadGroupIndex read_group_index) 
     result.reversed = read.is_reverse_strand ? 1 : 0;
     result.paired = (read.is_paired && !read.mate_is_unmapped) ? 1 : 0;
 
-    auto rg = read_group_index.getId(getRG(read));
-    result.library_id = cast(short)read_group_index.getLibraryId(rg);
+    // auto rg = read_group_index.getId(getRG(read));
+    // result.library_id = cast(short)read_group_index.getLibraryId(rg);
+
+    auto qname = read.name;
+    auto umi_seq = qname.split("_")[$-1];
+    auto kmer = KMer!12(umi_seq);
+    result.umi = cast(uint)kmer.id;
+
+    stderr.writeln("  umi sequence: ", umi_seq, " umi hash: ", result.umi);
+
     return result;
 }
 
 // may swap the two arguments
 PairedEndsInfo combine(ref SingleEndInfo s1, ref SingleEndInfo s2) {
-    assert(s1.library_id == s2.library_id);
+    // assert(s1.library_id == s2.library_id);
+    assert(s1.umi == s2.umi);
     assert(s1.paired && s2.paired);
 
     if ((s2.ref_id < s1.ref_id) ||
@@ -735,7 +744,10 @@ PairedEndsInfo combine(ref SingleEndInfo s1, ref SingleEndInfo s2) {
         swap(s1, s2);
 
     PairedEndsInfo result = void;
-    result.library_id = s1.library_id;
+    //result.library_id = s1.library_id;
+
+    result.umi = s1.umi;
+
     result.ref_id1 = s1.ref_id;
     result.ref_id2 = s2.ref_id;
     result.reversed1 = s1.reversed;
