@@ -36,6 +36,12 @@ import std.traits, std.typecons, std.range, std.algorithm, std.parallelism,
        std.exception, std.file, std.typetuple, std.conv, std.array, std.bitmanip,
        core.stdc.stdlib, std.datetime, undead.stream : BufferedFile, FileMode;
 
+// The length of UMIs used
+static const uint UMI_SIZE_BP = 12;
+
+// Validate the UMI k-mer hashes are correct, and print debugging info (slow)
+static const bool VALIDATE_UMI_HASHES = false;
+
 /// Read + its index (0-based)
 struct IndexedBamRead {
     ulong index;
@@ -718,15 +724,19 @@ auto collectSingleEndInfo(IndexedBamRead read, ReadGroupIndex read_group_index) 
     result.reversed = read.is_reverse_strand ? 1 : 0;
     result.paired = (read.is_paired && !read.mate_is_unmapped) ? 1 : 0;
 
-    // auto rg = read_group_index.getId(getRG(read));
-    // result.library_id = cast(short)read_group_index.getLibraryId(rg);
-
     auto qname = read.name;
     auto umi_seq = qname.split("_")[$-1];
-    auto kmer = KMer!12(umi_seq);
+    assert(umi_seq.length == UMI_SIZE_BP);
+    auto kmer = KMer!(UMI_SIZE_BP)(umi_seq);
     result.umi = cast(uint)kmer.id;
 
-    stderr.writeln("  umi sequence: ", umi_seq, " umi hash: ", result.umi);
+    if (VALIDATE_UMI_HASHES) {
+      auto kmer2 = KMer!(UMI_SIZE_BP)(cast(ulong)result.umi);
+      auto seq2 = kmer2.sequence;
+      assert(equal(umi_seq, seq2));
+      stderr.writeln("  umi sequence: ", umi_seq, " umi hash: ",
+                     result.umi, "  umi->kmer sequence: ", seq2);
+    }
 
     return result;
 }
