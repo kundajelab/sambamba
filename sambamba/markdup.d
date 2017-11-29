@@ -34,7 +34,8 @@ import bio.bam.reader, bio.bam.readrange, bio.bam.writer, bio.bam.referenceinfo,
        bio.bam.multireader, bio.core.kmer;
 import std.traits, std.typecons, std.range, std.algorithm, std.parallelism,
        std.exception, std.file, std.typetuple, std.conv, std.array, std.bitmanip,
-       core.stdc.stdlib, std.datetime, undead.stream : BufferedFile, FileMode;
+       core.stdc.stdlib, std.datetime, std.string,
+       undead.stream : BufferedFile, FileMode;
 
 // The length of UMIs used
 static const uint UMI_SIZE_BP = 12;
@@ -732,10 +733,8 @@ auto collectSingleEndInfo(IndexedBamRead read, ReadGroupIndex read_group_index) 
 
     if (VALIDATE_UMI_HASHES) {
       auto kmer2 = KMer!(UMI_SIZE_BP)(cast(ulong)result.umi);
-      auto seq2 = kmer2.sequence;
-      assert(equal(umi_seq, seq2));
-      stderr.writeln("  umi sequence: ", umi_seq, " umi hash: ",
-                     result.umi, "  umi->kmer sequence: ", seq2);
+      assert(equal(kmer2.sequence, kmer.sequence));
+      assert(kmer2.id == kmer.id);
     }
 
     return result;
